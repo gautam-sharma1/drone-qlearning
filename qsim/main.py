@@ -8,14 +8,8 @@ from matplotlib import style
 import time
 import numpy as np
 import csv
-import gym
 
-from keras.models import Sequential
-from keras.layers import Dense, Activation, Flatten
-from keras.optimizers import Adam
 
-from rl.agents.cem import CEMAgent
-from rl.memory import EpisodeParameterMemory
 
 show_animation = True
 from mpl_toolkits.mplot3d import Axes3D
@@ -40,17 +34,16 @@ des_yaw = 0
 
 dt = 0.1
 t = 0
-q = Quadrotor(x=x_pos, y=y_pos, z=z_pos, roll=roll,pitch=pitch, yaw=yaw, size=1)
 
 
 
 style.use("ggplot")
 
 SIZE = 10
-HM_EPISODES = 800
-MOVE_PENALTY = 1
-ENEMY_PENALTY = 300
-FOOD_REWARD = 250
+HM_EPISODES = 50000
+MOVE_PENALTY = 2
+ENEMY_PENALTY = 30
+FOOD_REWARD = 70
 goal_coord=(5,5)
 epsilon = 0.9
 EPS_DECAY = 0.9998
@@ -58,14 +51,14 @@ EPS_DECAY = 0.9998
 SHOW_EVERY = 300
 # pickle_in = open("qtable-1583896702.pickle","rb")
 # example_dict = pickle.load(pickle_in)
-start_q_table = None # or filename
+ # or filename
 
 LEARNING_RATE = 0.1
-DISCOUNT = 0.95
+DISCOUNT = 0.90
 
 PLAYER_N = 1
-FOOD_N = 2
 
+q = Quadrotor(x=x_pos, y=y_pos, z=z_pos,x1=x_pos+3, y1=y_pos+5, z1=z_pos,   roll=roll, pitch=pitch, yaw=yaw, size=1)
 acs=[]
 obse =[]
 class Blob:
@@ -73,6 +66,7 @@ class Blob:
         self.x = np.random.randint(0,SIZE)
         self.y = np.random.randint(0, SIZE)
         self.z = np.random.randint(0, SIZE)
+
     def __str__(self):
         return f"{self.x}, {self.y},{self.z}"
     def __sub__(self, other):
@@ -90,7 +84,9 @@ class Blob:
             self.move(x=0,y=0,z=1)
         elif choice == 5:
             self.move(x=0,y=0,z=-1)
-
+        elif choice == 6:
+            self.move(x=0, y=0, z=0)
+ #doubtful
         pass
     def move(self,x=False,y=False,z=False):
         if not x:
@@ -117,27 +113,37 @@ class Blob:
             self.z = 0
         elif self.z > SIZE - 1:
             self.z = SIZE - 1
-q_table = {}
 
+
+
+start_q_table = None
+q_table={}
+# start_q_table= "qtable-1585877759.pickle"
+# with open(start_q_table, "rb") as f:
+#     q_table = pickle.load(f)
 if start_q_table is None:
 
     for x1 in range(-SIZE,SIZE):
         for y1 in range(-SIZE , SIZE):
             for z1 in range(-SIZE,SIZE):
-                    q_table[(x1,y1,z1)] = [np.random.uniform(0,5) for i in range(6)]
+                q_table[(x1,y1,z1)] = [np.random.uniform(0,5) for i in range(7)]
 
-# else:
-#     with open(start_q_table, "rb") as f:
-#         q_table = pickle.load(f)
+else:
+    with open(start_q_table, "rb") as f:
+        print("-----------------Loaded q_table--------------------")
+        q_table = pickle.load(f)
 episode_rewards=[]
 food = Blob()
-food.x=4 #Goal position
-food.y=4
-food.z=4#Goal position
-
+food.x = 4 #Goal position
+food.y = 4
+food.z = 4 #Goal position
+food.roll = 0
+prev=[0,0,0,0]
+MAX_REWARD = 850
 for episodes in range(HM_EPISODES):
-    player = Blob()
-
+    player1 = Blob()
+    player2 = Blob()
+    reward = 0
 
     if episodes % SHOW_EVERY == 0:
         print(f"on #{episodes}, epsilon: {epsilon}")
@@ -147,25 +153,47 @@ for episodes in range(HM_EPISODES):
         show = False
     episode_reward = 0
     for i in range(200):
-        obs = (player-food)
+        obs = (player1-player2)
         if np.random.random() > epsilon:
             action = np.argmax(q_table[obs])
         else:
-            action= np.random.randint(0,6)
+            action= np.random.randint(0,7)
 
-        player.action(action)
+        player1.action(action)
+        player2.action(action)
         acs.append(action)
         obse.append(obs)
-        ### maybe later
-        #food.move()
-
-        # if player.x == enemy.x and player.y == enemy.y:
-        #     reward = -ENEMY_PENALTY
-        if player.x == food.x and player.y == food.y and player.z==food.z :
-            reward = FOOD_REWARD
+        ######################
+        """
+        EDIT THE SECTION BELOW
+        REWARD SECTION BEGIN
+        """
+        if player1.x == food.x and player1.y == food.y and player1.z == food.z:
+            reward += FOOD_REWARD/2
+        elif player1.x == food.x:
+            reward += 2
+        elif player1.z == food.z:
+            reward += 2
+        elif player1.y == food.y:
+            reward += 2
+        if player2.x == food.x and player2.y == food.y+4 and player2.z == food.z:
+            reward += FOOD_REWARD/2
+        elif player2.x == food.x:
+            reward += 2
+        elif player2.z == food.z:
+            reward += 2
+        elif player2.y == food.y+4:
+            reward += 2
         else:
             reward = -MOVE_PENALTY
-        new_obs = (player-food)
+        '''
+        REWARD SECTION END  
+        No need to edit anything else
+        '''
+
+     ###########################
+        new_obs = (player1-player2)
+        prev = new_obs
         max_future_q = np.max(q_table[new_obs])
         current_q = q_table[obs][action]
 
@@ -176,10 +204,10 @@ for episodes in range(HM_EPISODES):
         else:
             new_q = (1-LEARNING_RATE)*current_q + LEARNING_RATE*(reward+DISCOUNT*max_future_q)
         q_table[obs][action] = new_q
-        if episodes % 1000 ==0:
-             q.update_pose(x=new_obs[0], y=new_obs[1], z=new_obs[2], roll=0, pitch=0, yaw=0)
+        # if episodes % 1000==0:
+        #      q.update_pose(x=player1.x, y=player1.y, z=player1.z, x1=player2.x, y1=player2.y, z1=player2.z,roll=0, pitch=0, yaw=0)
         episode_reward += reward
-        if reward == FOOD_REWARD:
+        if reward == 85:
             break
     episode_rewards.append(episode_reward)
     epsilon *= EPS_DECAY
@@ -187,11 +215,11 @@ moving_avg = np.convolve(episode_rewards, np.ones((SHOW_EVERY,))/SHOW_EVERY,mode
 
 np.savetxt("action.csv", acs, delimiter=",", fmt='%d', header="Action")
 np.savetxt("observation.csv", obse, delimiter=",", fmt='%d', header="Observation")
-with open('QVALUE.csv', 'w') as f:
-    for key in q_table.keys():
-        f.write("%s,%s,%s,%s\n"%(key[0],key[1],key[2],q_table[key]))
-# with open(f"qtable-{int(time.time())}.pickle", "wb") as f:
-#     pickle.dump(q_table, f)
+# with open('QVALUE.csv', 'w') as f:
+#     for key in q_table.keys():
+#         f.write("%s,%s\n"%((key[0],key[1],key[2],key[3]),q_table[key]))
+with open(f"qtable-{int(time.time())}.pickle", "wb") as f:
+    pickle.dump(q_table, f)
 
 plt.figure()
 plt.plot([i for i in range(len(moving_avg))],moving_avg)
